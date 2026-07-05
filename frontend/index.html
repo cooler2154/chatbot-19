@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JDE Manufacturing Assistant</title>
+<style>
+  :root {
+    --bg: #f5f5f4; --surface: #ffffff; --surface2: #f9f9f8;
+    --border: #e5e5e4; --border2: #d1d1ce;
+    --text: #1a1a18; --text2: #6b6b67; --text3: #9b9b96;
+    --accent: #2563eb; --accent-bg: #eff6ff; --accent-text: #1d4ed8;
+    --success: #16a34a; --success-bg: #f0fdf4;
+    --warning: #d97706; --warning-bg: #fffbeb;
+    --danger: #dc2626; --danger-bg: #fef2f2;
+    --radius: 8px; --mono: 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--text); height: 100vh;
+         display: flex; overflow: hidden; font-size: 14px; }
+
+  /* Sidebar */
+  #sidebar { width: 0; overflow: hidden; transition: width .2s;
+             background: var(--surface); border-right: 1px solid var(--border);
+             flex-shrink: 0; display: flex; flex-direction: column; }
+  #sidebar.open { width: 340px; }
+  .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border);
+                    display: flex; align-items: center; justify-content: space-between; }
+  .sidebar-header h2 { font-size: 14px; font-weight: 600; }
+  .tab-row { display: flex; border-bottom: 1px solid var(--border); }
+  .tab { flex: 1; padding: 9px; text-align: center; font-size: 12px; font-weight: 500;
+         color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; flex: 1; overflow-y: auto; padding: 14px; }
+  .tab-content.active { display: block; }
+
+  /* Config */
+  .field-group { margin-bottom: 14px; }
+  .field-group label { display: block; font-size: 12px; color: var(--text2);
+                       margin-bottom: 4px; font-weight: 500; }
+  .field-group input { width: 100%; padding: 7px 10px; border: 1px solid var(--border2);
+                       border-radius: var(--radius); font-size: 13px;
+                       background: var(--surface); color: var(--text); outline: none; }
+  .field-group input:focus { border-color: var(--accent);
+                             box-shadow: 0 0 0 2px var(--accent-bg); }
+  .section-label { font-size: 11px; font-weight: 600; color: var(--text3);
+                   text-transform: uppercase; letter-spacing: .05em; margin: 16px 0 10px; }
+
+  /* Health */
+  .health-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+           font-weight: 500; padding: 4px 10px; border-radius: 20px; }
+  .badge.ok  { background: var(--success-bg); color: var(--success); }
+  .badge.err { background: var(--danger-bg);  color: var(--danger); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  /* Data model */
+  .module-section { margin-bottom: 12px; }
+  .module-title { font-size: 12px; font-weight: 600; color: var(--text2);
+                  padding: 6px 0; cursor: pointer; display: flex;
+                  align-items: center; gap: 6px; }
+  .module-title .arrow { transition: transform .15s; font-size: 10px; }
+  .module-title.collapsed .arrow { transform: rotate(-90deg); }
+  .table-list { padding-left: 12px; }
+  .table-item { padding: 5px 8px; border-radius: var(--radius);
+                cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+  .table-item:hover { background: var(--bg); }
+  .table-item .tname { font-family: var(--mono); font-weight: 600;
+                       color: var(--accent-text); font-size: 11px; }
+  .table-item .tdesc { color: var(--text2); font-size: 11px; margin-top: 1px; }
+
+  /* Main */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* Header */
+  #header { padding: 10px 16px; border-bottom: 1px solid var(--border);
+            background: var(--surface); display: flex; align-items: center; gap: 10px; }
+  .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-bg);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 18px; flex-shrink: 0; }
+  .header-info h1 { font-size: 15px; font-weight: 600; }
+  .header-info p  { font-size: 12px; color: var(--text2); }
+  .hdr-actions { margin-left: auto; display: flex; gap: 6px; }
+  button { cursor: pointer; border: 1px solid var(--border2);
+           border-radius: var(--radius); background: var(--surface);
+           color: var(--text); padding: 6px 12px; font-size: 13px;
+           font-weight: 500; transition: background .1s; }
+  button:hover { background: var(--bg); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: #1d4ed8; }
+  button.ghost { border-color: transparent; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.danger { background: var(--danger-bg); color: var(--danger);
+                  border-color: var(--danger); }
+
+  /* Messages */
+  #messages { flex: 1; overflow-y: auto; padding: 16px;
+              display: flex; flex-direction: column; gap: 14px; }
+  .msg { display: flex; gap: 10px; align-items: flex-start; }
+  .msg.user { flex-direction: row-reverse; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center;
+            font-size: 14px; flex-shrink: 0; }
+  .avatar.user { background: var(--accent); color: #fff; }
+  .avatar.bot  { background: var(--success-bg); color: var(--success); font-size: 16px; }
+  .bubble { max-width: 82%; }
+  .bubble-content { padding: 10px 14px; border-radius: 12px;
+                    line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .bubble-content { background: var(--accent); color: #fff; }
+  .msg.bot  .bubble-content { background: var(--surface); border: 1px solid var(--border);
+                               color: var(--text); }
+  .msg-time { font-size: 11px; color: var(--text3); margin-top: 4px; padding: 0 4px; }
+  .msg.user .msg-time { text-align: right; }
+
+  /* Tool chips */
+  .tool-chip { display: inline-flex; align-items: center; gap: 6px;
+               background: var(--accent-bg); color: var(--accent-text);
+               border: 1px solid #bfdbfe; border-radius: 6px;
+               padding: 4px 10px; font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+  .tool-chip.done  { background: var(--success-bg); color: var(--success); border-color: #bbf7d0; }
+  .tool-chip.error { background: var(--danger-bg);  color: var(--danger);  border-color: #fecaca; }
+  .tool-result-box { background: var(--surface2); border: 1px solid var(--border);
+                     border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px;
+                     font-family: var(--mono); font-size: 11.5px; overflow-x: auto;
+                     color: var(--text2); max-height: 200px; overflow-y: auto; }
+  .tool-result-box .result-meta { font-size: 11px; color: var(--text3);
+                                  margin-bottom: 6px; font-family: -apple-system, sans-serif; }
+
+  /* Empty state */
+  #empty { text-align: center; padding: 3rem 1rem; flex: 1; display: flex;
+           flex-direction: column; align-items: center; justify-content: center; }
+  #empty .icon { font-size: 48px; margin-bottom: 1rem; }
+  #empty h2 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  #empty p { color: var(--text2); max-width: 360px; line-height: 1.6; margin-bottom: 1.5rem; }
+  .quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+                   max-width: 560px; }
+  .qp { font-size: 12px; padding: 5px 10px; border: 1px solid var(--border2);
+        border-radius: 20px; color: var(--text2); background: var(--surface); cursor: pointer; }
+  .qp:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Input */
+  #input-area { padding: 12px 16px; border-top: 1px solid var(--border);
+                background: var(--surface); display: flex; gap: 8px; align-items: flex-end; }
+  #user-input { flex: 1; resize: none; border: 1px solid var(--border2);
+                border-radius: var(--radius); padding: 9px 12px; font-size: 14px;
+                font-family: inherit; line-height: 1.5; min-height: 40px;
+                max-height: 140px; outline: none; background: var(--surface); color: var(--text); }
+  #user-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+  #send-btn { padding: 9px 14px; flex-shrink: 0; }
+  #stop-btn { padding: 9px 14px; flex-shrink: 0; }
+
+  /* Unconfigured banner */
+  .banner { padding: 8px 14px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .banner.warning { background: var(--warning-bg); color: var(--warning);
+                    border-bottom: 1px solid #fde68a; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin .8s linear infinite; }
+  .cursor::after { content: '▋'; animation: blink 1s step-end infinite; color: var(--accent); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h2>⚙️ Settings</h2>
+    <button class="ghost" onclick="toggleSidebar()">✕</button>
+  </div>
+  <div class="tab-row">
+    <div class="tab active" onclick="switchTab('config')">Config</div>
+    <div class="tab" onclick="switchTab('health')">Health</div>
+    <div class="tab" onclick="switchTab('datamodel')">Data Model</div>
+  </div>
+
+  <!-- Config tab -->
+  <div id="tab-config" class="tab-content active">
+    <div class="section-label">Ollama</div>
+    <div class="field-group"><label>Server URL</label>
+      <input id="cfg-ollama-url" placeholder="http://localhost:11434"></div>
+    <div class="field-group"><label>Model</label>
+      <input id="cfg-ollama-model" placeholder="qwen2.5:3b" list="model-list">
+      <datalist id="model-list"></datalist></div>
+
+    <div class="section-label">JDE AIS</div>
+    <div class="field-group"><label>AIS Server URL</label>
+      <input id="cfg-ais-url" placeholder="http://jde-server:1181/jderest/v2"></div>
+    <div class="field-group"><label>Username</label>
+      <input id="cfg-username" placeholder="JDE_USER"></div>
+    <div class="field-group"><label>Password</label>
+      <input id="cfg-password" type="password" placeholder="••••••••"></div>
+    <div class="field-group"><label>Environment</label>
+      <input id="cfg-env" placeholder="JDV920"></div>
+    <div class="field-group"><label>Role</label>
+      <input id="cfg-role" placeholder="*ALL"></div>
+    <div class="field-group"><label>Default Plant</label>
+      <input id="cfg-plant" placeholder="M30"></div>
+
+    <button class="primary" style="width:100%;margin-top:4px" onclick="saveConfig()">
+      Save configuration
+    </button>
+  </div>
+
+  <!-- Health tab -->
+  <div id="tab-health" class="tab-content">
+    <div id="health-content">
+      <p style="color:var(--text2);font-size:13px">Click refresh to check connections.</p>
+    </div>
+    <button onclick="checkHealth(false)" style="margin-top:12px;width:100%">↻ Refresh</button>
+  </div>
+
+  <!-- Data model tab -->
+  <div id="tab-datamodel" class="tab-content">
+    <p style="color:var(--text2);font-size:12px;margin-bottom:12px">
+      Click a table to see its field structure.</p>
+    <div id="dm-content"></div>
+  </div>
+</div>
+
+<!-- Main -->
+<div id="main">
+  <div id="header">
+    <div class="logo">🏭</div>
+    <div class="header-info">
+      <h1>JDE Manufacturing Assistant</h1>
+      <p id="header-sub">Connecting…</p>
+    </div>
+    <div class="hdr-actions">
+      <button onclick="clearChat()">Clear</button>
+      <button onclick="toggleSidebar()">⚙️ Config</button>
+    </div>
+  </div>
+
+  <div id="unconfigured-banner" class="banner warning" style="display:none">
+    ⚠️ JDE AIS credentials not configured — data queries will fail. Open Config to set them.
+  </div>
+
+  <div id="messages">
+    <div id="empty">
+      <div class="icon">🏭</div>
+      <h2>JDE Manufacturing Assistant</h2>
+      <p>Ask about work orders, BOMs, routings, MRP, shop floor, or raw materials.
+         I can query your live JDE data.</p>
+      <div class="quick-prompts" id="quick-prompts"></div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <textarea id="user-input" placeholder="Ask about JDE manufacturing…" rows="1"></textarea>
+    <button id="send-btn" class="primary" onclick="sendMessage()">Send ↗</button>
+    <button id="stop-btn" class="danger" onclick="stopStream()" style="display:none">■ Stop</button>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+var state = { history: [], streaming: false, abortCtrl: null };
+
+var QUICK_PROMPTS = [
+  "Show work orders in status 40 (In Process) in plant M30",
+  "Get work order 451021 details",
+  "List raw materials for order 451021",
+  "Show BOM for item 2004 in plant M30",
+  "Get routing for item 2001 in plant M30",
+  "Search work orders in approved status (20) in M30",
+  "Check inventory for item 2001",
+  "What are unprocessed MRP messages for plant M30?",
+  "Explain the JDE work order completion process",
+  "What does WO status 35 mean?",
+];
+
+var CHIP_LABELS = {
+  get_work_order:           "🔍 Fetching work order",
+  search_work_orders:       "🔍 Searching work orders",
+  get_bom:                  "📋 Loading BOM",
+  get_routing:              "🔧 Loading routing",
+  get_wo_parts_list:        "📦 Loading parts list",
+  get_wo_operations:        "⚙️ Loading operations",
+  get_wo_raw_material_list: "🧪 Loading raw materials",
+  get_mrp_messages:         "📊 Fetching MRP messages",
+  get_item_inventory:       "📦 Checking inventory",
+  get_item_cost:            "💰 Fetching cost data",
+  generic_data_request:     "🗄️ Querying JDE table",
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.onload = function() {
+  renderQuickPrompts();
+  renderDataModel();
+  loadConfig();
+  checkHealth(true);
+  setupInput();
+};
+
+function setupInput() {
+  var ta = document.getElementById('user-input');
+  ta.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  ta.addEventListener('input', function() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+  });
+}
+
+// ── Config ────────────────────────────────────────────────────────────────
+function loadConfig() {
+  api('GET', '/api/config').then(function(cfg) {
+    document.getElementById('cfg-ollama-url').value   = cfg.ollama_url    || '';
+    document.getElementById('cfg-ollama-model').value = cfg.ollama_model  || '';
+    document.getElementById('cfg-ais-url').value      = cfg.jde_ais_url   || '';
+    document.getElementById('cfg-username').value     = cfg.jde_username  || '';
+    document.getElementById('cfg-password').value     = '';
+    document.getElementById('cfg-env').value          = cfg.jde_environment || '';
+    document.getElementById('cfg-role').value         = cfg.jde_role      || '';
+    document.getElementById('cfg-plant').value        = cfg.default_plant || '';
+    var banner = document.getElementById('unconfigured-banner');
+    banner.style.display = !cfg.jde_username ? 'flex' : 'none';
+  });
+}
+
+function saveConfig() {
+  var body = {
+    ollama_url:      document.getElementById('cfg-ollama-url').value,
+    ollama_model:    document.getElementById('cfg-ollama-model').value,
+    jde_ais_url:     document.getElementById('cfg-ais-url').value,
+    jde_username:    document.getElementById('cfg-username').value,
+    jde_environment: document.getElementById('cfg-env').value,
+    jde_role:        document.getElementById('cfg-role').value,
+    default_plant:   document.getElementById('cfg-plant').value,
+  };
+  var pw = document.getElementById('cfg-password').value;
+  if (pw) body.jde_password = pw;
+  api('POST', '/api/config', body).then(function() {
+    checkHealth(false);
+    var banner = document.getElementById('unconfigured-banner');
+    banner.style.display = !body.jde_username ? 'flex' : 'none';
+  });
+}
+
+// ── Health ────────────────────────────────────────────────────────────────
+function checkHealth(silent) {
+  api('GET', '/api/health').then(function(data) {
+    var sub = document.getElementById('header-sub');
+    sub.textContent = 'Ollama: ' + (data.ollama ? '✓' : '✗') +
+                      '  |  JDE AIS: ' + (data.jde ? '✓' : '✗') +
+                      '  |  ' + (data.jde_environment || '');
+
+    if (data.models) {
+      var dl = document.getElementById('model-list');
+      dl.innerHTML = data.models.map(function(m) {
+        return '<option value="' + m + '">';
+      }).join('');
+    }
+
+    if (!silent) {
+      var html = '<div class="health-row">' +
+        '<span class="badge ' + (data.ollama ? 'ok' : 'err') + '">' +
+          '<span class="dot"></span>Ollama ' + (data.ollama ? 'connected' : 'offline') + '</span>' +
+        '<span class="badge ' + (data.jde ? 'ok' : 'err') + '">' +
+          '<span class="dot"></span>JDE AIS ' + (data.jde ? 'connected' : 'offline') + '</span>' +
+        '</div>';
+      if (data.ollama_error) {
+        html += '<div style="background:var(--danger-bg);border:1px solid #fecaca;' +
+          'border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:12px;color:var(--danger)">' +
+          '<b>Ollama not reachable:</b> ' + escHtml(data.ollama_error) + '<br><br>' +
+          'Steps: 1. Install from <b>https://ollama.com</b><br>' +
+          '2. Run: <code>ollama serve</code><br>' +
+          '3. Pull model: <code>ollama pull qwen2.5:3b</code></div>';
+      }
+      if (data.jde_error) {
+        html += '<div style="background:var(--danger-bg);border:1px solid #fecaca;' +
+          'border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:12px;color:var(--danger)">' +
+          '<b>JDE AIS error:</b> ' + escHtml(data.jde_error) + '</div>';
+      }
+      if (data.jde_ais_url) {
+        html += '<p style="font-size:12px;color:var(--text2);margin-bottom:4px">' +
+          'AIS URL: <code style="font-size:11px">' + escHtml(data.jde_ais_url) + '</code></p>';
+      }
+      if (data.models && data.models.length) {
+        html += '<p style="font-size:12px;color:var(--text2);margin-bottom:6px">' +
+          '<b>Available models</b> (click to use):</p>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">' +
+          data.models.map(function(m) {
+            return '<button onclick="setModel(\'' + m + '\')" style="font-size:11px;' +
+              'padding:3px 8px;border-radius:4px;background:var(--accent-bg);' +
+              'color:var(--accent-text);border:1px solid #bfdbfe">' + m + '</button>';
+          }).join('') + '</div>';
+      }
+      document.getElementById('health-content').innerHTML = html;
+    }
+  });
+}
+
+function setModel(name) {
+  document.getElementById('cfg-ollama-model').value = name;
+  switchTab('config');
+  saveConfig();
+  setTimeout(function() { switchTab('health'); checkHealth(false); }, 500);
+}
+
+// ── Data Model ────────────────────────────────────────────────────────────
+function renderDataModel() {
+  api('GET', '/api/datamodel').then(function(data) {
+    var container = document.getElementById('dm-content');
+    var html = '';
+    var modules = data.modules;
+    var tables  = data.tables;
+    for (var mod in modules) {
+      html += '<div class="module-section"><div class="module-title" onclick="toggleModule(this)">' +
+              '<span class="arrow">▾</span> ' + mod + '</div><div class="table-list">';
+      modules[mod].forEach(function(tname) {
+        var t = tables[tname];
+        if (!t) return;
+        html += '<div class="table-item" onclick="showTableFields(\'' + tname + '\',' +
+                '\'' + t.description.replace(/'/g,"&#39;") + '\')">' +
+                '<div class="tname">' + tname + '</div>' +
+                '<div class="tdesc">' + t.description + '</div></div>';
+      });
+      html += '</div></div>';
+    }
+    container.innerHTML = html;
+  });
+}
+
+function toggleModule(el) {
+  el.classList.toggle('collapsed');
+  el.nextElementSibling.style.display = el.classList.contains('collapsed') ? 'none' : 'block';
+}
+
+function showTableFields(name, desc) {
+  toggleSidebar();
+  api('GET', '/api/datamodel/' + name).then(function(data) {
+    hideEmpty();
+    var detail = data.detail || '';
+    var lines = detail.split('\n');
+    var html = '<div style="font-size:13px;font-weight:600;margin-bottom:8px">📋 ' +
+               name + ' — Field Reference</div>' +
+               '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+               '<thead><tr style="border-bottom:1px solid var(--border)">' +
+               '<th style="text-align:left;padding:4px 8px;color:var(--text2)">Alias</th>' +
+               '<th style="text-align:left;padding:4px 8px;color:var(--text2)">Field Name</th>' +
+               '<th style="text-align:left;padding:4px 8px;color:var(--text2)">Type</th>' +
+               '<th style="text-align:left;padding:4px 8px;color:var(--text2)">Description</th>' +
+               '</tr></thead><tbody>';
+    var inData = false;
+    lines.forEach(function(line) {
+      if (line.startsWith('-')) { inData = true; return; }
+      if (!inData) return;
+      if (line.startsWith('**') || line.startsWith('Module') || line.startsWith('Related')) return;
+      var m = line.match(/^(\S+)\s{2,}(.+?)\s{2,}(\S+)\s{2,}(.+)$/);
+      if (m) {
+        html += '<tr style="border-bottom:0.5px solid var(--border)">' +
+                '<td style="padding:3px 8px;font-family:monospace;color:var(--accent-text)">' + escHtml(m[1]) + '</td>' +
+                '<td style="padding:3px 8px">' + escHtml(m[2].trim()) + '</td>' +
+                '<td style="padding:3px 8px;color:var(--text2)">' + escHtml(m[3]) + '</td>' +
+                '<td style="padding:3px 8px;color:var(--text2)">' + escHtml(m[4]) + '</td></tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    appendBotHTML(html);
+  });
+}
+
+function appendBotHTML(html) {
+  var msgs = document.getElementById('messages');
+  var div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = '<div class="avatar bot">🏭</div>' +
+    '<div class="bubble"><div class="bubble-content" style="max-width:600px;padding:12px">' +
+    html + '</div><div class="msg-time">' + timestamp() + '</div></div>';
+  msgs.appendChild(div);
+  scrollBottom();
+}
+
+// ── Quick Prompts ─────────────────────────────────────────────────────────
+function renderQuickPrompts() {
+  var container = document.getElementById('quick-prompts');
+  if (!container) return;
+  container.innerHTML = QUICK_PROMPTS.map(function(p) {
+    return '<button class="qp" onclick="usePrompt(\'' +
+           p.replace(/'/g, "\\'") + '\')">' + p + '</button>';
+  }).join('');
+}
+
+function usePrompt(text) {
+  document.getElementById('user-input').value = text;
+  sendMessage();
+}
+
+// ── Stream Control ────────────────────────────────────────────────────────
+function stopStream() {
+  if (state.abortCtrl) {
+    state.abortCtrl.abort();
+    state.abortCtrl = null;
+  }
+  state.streaming = false;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('send-btn').style.display = 'inline-flex';
+  document.getElementById('stop-btn').style.display = 'none';
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+function sendMessage() {
+  var input = document.getElementById('user-input');
+  var text = input.value.trim();
+  if (!text || state.streaming) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  hideEmpty();
+  appendUserMsg(text);
+  state.history.push({ role: 'user', content: text });
+  var botId = appendBotMsg();
+  state.streaming = true;
+  state.abortCtrl = new AbortController();
+  document.getElementById('send-btn').disabled = true;
+  document.getElementById('send-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'inline-flex';
+
+  var historyToSend = state.history.slice(0, -1);
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text, history: historyToSend }),
+    signal: state.abortCtrl.signal,
+  }).then(function(resp) {
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var fullText = '';
+    var buf = '';
+
+    function readChunk() {
+      return reader.read().then(function(result) {
+        if (result.done) {
+          finishStream(botId, fullText);
+          return;
+        }
+        buf += decoder.decode(result.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop();
+
+        lines.forEach(function(line) {
+          if (!line.startsWith('data: ')) return;
+          var event;
+          try { event = JSON.parse(line.slice(6)); } catch(e) { return; }
+
+          if (event.type === 'text') {
+            fullText += event.content;
+            setBotText(botId, fullText, true);
+          } else if (event.type === 'tool_start') {
+            addToolChip(botId, event.name, event.args, 'loading');
+          } else if (event.type === 'tool_result') {
+            updateToolChip(botId, event.name, event.row_count, event.preview);
+          } else if (event.type === 'error') {
+            fullText += '\n\nError: ' + event.content;
+            setBotText(botId, fullText, false);
+          } else if (event.type === 'done') {
+            setBotText(botId, fullText, false);
+            state.history.push({ role: 'assistant', content: fullText });
+            finishStream(botId, fullText);
+            return;
+          }
+        });
+
+        return readChunk();
+      });
+    }
+
+    return readChunk();
+  }).catch(function(err) {
+    if (err.name === 'AbortError') {
+      var el = document.getElementById(botId + '-text');
+      if (el) el.textContent = (el.textContent || '') + '\n[Stopped by user]';
+      el && el.classList.remove('cursor');
+    } else {
+      setBotText(botId, 'Connection error: ' + err.message, false);
+    }
+    finishStream(botId, '');
+  });
+}
+
+function finishStream(botId, fullText) {
+  state.streaming = false;
+  state.abortCtrl = null;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('send-btn').style.display = 'inline-flex';
+  document.getElementById('stop-btn').style.display = 'none';
+}
+
+// ── DOM Helpers ───────────────────────────────────────────────────────────
+function hideEmpty() {
+  var e = document.getElementById('empty');
+  if (e) e.remove();
+}
+
+function appendUserMsg(text) {
+  var msgs = document.getElementById('messages');
+  var div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = '<div class="avatar user">👤</div>' +
+    '<div class="bubble"><div class="bubble-content">' + escHtml(text) + '</div>' +
+    '<div class="msg-time">' + timestamp() + '</div></div>';
+  msgs.appendChild(div);
+  scrollBottom();
+}
+
+function appendBotMsg() {
+  var msgs = document.getElementById('messages');
+  var id = 'bot-' + Date.now();
+  var div = document.createElement('div');
+  div.className = 'msg bot';
+  div.id = id;
+  div.innerHTML = '<div class="avatar bot">🏭</div>' +
+    '<div class="bubble">' +
+    '<div class="tool-area" id="' + id + '-tools"></div>' +
+    '<div class="bubble-content cursor" id="' + id + '-text"></div>' +
+    '<div class="msg-time">' + timestamp() + '</div>' +
+    '</div>';
+  msgs.appendChild(div);
+  scrollBottom();
+  return id;
+}
+
+function stripMarkdownTables(text) {
+  // Remove markdown table blocks (lines starting with | ) since we show HTML tables already
+  var lines = text.split('\n');
+  var out = [];
+  var i = 0;
+  while (i < lines.length) {
+    var line = lines[i].trim();
+    // Detect start of markdown table (| col | col |)
+    if (line.startsWith('|') && line.endsWith('|')) {
+      // Skip all consecutive table lines including separator
+      while (i < lines.length && (lines[i].trim().startsWith('|') || lines[i].trim().match(/^[\s\-\|:]+$/))) {
+        i++;
+      }
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  // Collapse multiple blank lines into one
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function setBotText(id, text, streaming) {
+  var el = document.getElementById(id + '-text');
+  if (!el) return;
+  var cleaned = streaming ? text : stripMarkdownTables(text || '');
+  el.textContent = cleaned;
+  if (streaming) el.classList.add('cursor');
+  else el.classList.remove('cursor');
+  scrollBottom();
+}
+
+var toolChipMap = {};
+
+function addToolChip(botId, toolName, args, status) {
+  var area = document.getElementById(botId + '-tools');
+  if (!area) return;
+  var chipId = 'chip-' + botId + '-' + toolName + '-' + Date.now();
+  toolChipMap[botId + '-' + toolName] = chipId;
+  var label = CHIP_LABELS[toolName] || ('🔧 ' + toolName);
+  var div = document.createElement('div');
+  div.id = chipId;
+  div.innerHTML = '<div class="tool-chip" id="' + chipId + '-chip">' +
+                  '<span class="spin">⏳</span> ' + label + '…</div>';
+  area.appendChild(div);
+  scrollBottom();
+}
+
+function parseTextTable(text) {
+  // Parse the plain-text table format produced by format_rows_as_text()
+  // Returns { headers: [], rows: [], note: "" }
+  var lines = text.split('\n');
+  if (lines.length < 3) return null;
+  var header = lines[0];
+  var sep    = lines[1];
+  if (!sep || !sep.match(/^[-\s]+$/)) return null;
+
+  // Determine column widths from separator
+  var cols = [];
+  var i = 0;
+  while (i < sep.length) {
+    var start = i;
+    while (i < sep.length && sep[i] === '-') i++;
+    cols.push({ start: start, end: i });
+    while (i < sep.length && sep[i] === ' ') i++;
+  }
+
+  function extractCols(line) {
+    return cols.map(function(c) {
+      return (line.substring(c.start, c.end) || '').trim();
+    });
+  }
+
+  var headers = extractCols(header);
+  var rows = [];
+  for (var r = 2; r < lines.length; r++) {
+    var line = lines[r];
+    if (!line || line.startsWith('(')) continue;
+    rows.push(extractCols(line));
+  }
+
+  // Last line is the note e.g. "(20 of 33 total records...)"
+  var note = '';
+  for (var n = lines.length - 1; n >= 0; n--) {
+    if (lines[n].startsWith('(')) { note = lines[n]; break; }
+  }
+
+  return { headers: headers, rows: rows, note: note };
+}
+
+function renderTableHTML(toolName, parsed, rowCount) {
+  if (!parsed || !parsed.headers.length) return null;
+
+  var FRIENDLY = {
+    get_work_order:           'Work Order Detail',
+    search_work_orders:       'Work Orders',
+    get_bom:                  'Bill of Materials',
+    get_routing:              'Routing Operations',
+    get_wo_parts_list:        'Work Order Parts List',
+    get_wo_operations:        'Work Order Operations',
+    get_wo_raw_material_list: 'Raw Materials (F3111)',
+    get_mrp_messages:         'MRP Planning Messages',
+    get_item_inventory:       'Inventory Balances',
+    get_item_cost:            'Cost Components',
+    generic_data_request:     'Query Results',
+  };
+  var title = FRIENDLY[toolName] || toolName;
+
+  var html = '<div style="margin-top:4px">' +
+    '<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">' +
+    '📊 ' + title + '</div>' +
+    '<div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr style="background:var(--surface2)">';
+
+  parsed.headers.forEach(function(h) {
+    if (!h) return;
+    html += '<th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);' +
+            'color:var(--text2);font-weight:600;white-space:nowrap">' + escHtml(h) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  parsed.rows.forEach(function(row, ri) {
+    var bg = ri % 2 === 0 ? '' : 'background:var(--surface2)';
+    html += '<tr style="' + bg + '">';
+    row.forEach(function(cell, ci) {
+      if (ci >= parsed.headers.length || !parsed.headers[ci]) return;
+      html += '<td style="padding:5px 10px;border-bottom:0.5px solid var(--border);' +
+              'font-family:var(--mono);font-size:11px;white-space:nowrap">' +
+              escHtml(cell || '') + '</td>';
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  if (parsed.note) {
+    html += '<div style="font-size:11px;color:var(--text3);margin-top:4px;padding:0 2px">' +
+            escHtml(parsed.note) + '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function updateToolChip(botId, toolName, rowCount, preview) {
+  var chipId = toolChipMap[botId + '-' + toolName];
+  if (!chipId) return;
+  var chip = document.getElementById(chipId + '-chip');
+  if (chip) {
+    chip.className = 'tool-chip done';
+    chip.innerHTML = '✓ ' + toolName + ' — ' + rowCount +
+                     ' row' + (rowCount !== 1 ? 's' : '');
+  }
+  if (preview && preview.length > 10) {
+    var parent = document.getElementById(chipId);
+    if (!parent) { scrollBottom(); return; }
+    var resultDiv = document.createElement('div');
+    resultDiv.style.marginBottom = '8px';
+
+    // Try to render as a proper HTML table
+    var parsed = parseTextTable(preview);
+    var tableHTML = parsed ? renderTableHTML(toolName, parsed, rowCount) : null;
+
+    if (tableHTML) {
+      resultDiv.innerHTML = tableHTML;
+    } else {
+      // Fallback: monospace pre block
+      resultDiv.className = 'tool-result-box';
+      resultDiv.innerHTML = '<div class="result-meta">' + toolName + '</div>' +
+                            '<pre>' + escHtml(preview) + '</pre>';
+    }
+    parent.appendChild(resultDiv);
+  }
+  scrollBottom();
+}
+
+function clearChat() {
+  state.history = [];
+  var msgs = document.getElementById('messages');
+  msgs.innerHTML = '<div id="empty" style="text-align:center;padding:3rem 1rem;' +
+    'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center">' +
+    '<div style="font-size:48px;margin-bottom:1rem">🏭</div>' +
+    '<h2 style="font-size:16px;font-weight:600;margin-bottom:6px">JDE Manufacturing Assistant</h2>' +
+    '<p style="color:var(--text2);max-width:360px;line-height:1.6;margin-bottom:1.5rem">' +
+    'Ask about work orders, BOMs, routings, MRP, shop floor, or raw materials.</p>' +
+    '<div class="quick-prompts" id="quick-prompts"></div></div>';
+  renderQuickPrompts();
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+function switchTab(name) {
+  var tabs = ['config','health','datamodel'];
+  document.querySelectorAll('.tab').forEach(function(t, i) {
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(function(t) {
+    t.classList.remove('active');
+  });
+  var el = document.getElementById('tab-' + name);
+  if (el) el.classList.add('active');
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────
+function scrollBottom() {
+  var msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function timestamp() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function api(method, path, body) {
+  var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(path, opts).then(function(r) {
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  });
+}
+</script>
+</body>
+</html>
