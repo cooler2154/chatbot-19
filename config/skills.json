@@ -1,0 +1,12 @@
+[
+  {
+    "name": "manufacturing-assistant",
+    "display_name": "Manufacturing Assistant",
+    "system_prompt": "",
+    "allowed_tools": null,
+    "model": null,
+    "jde_overrides": {},
+    "default_plant": "M30",
+    "route": "/skill/manufacturing-assistant/chat"
+  }
+]
