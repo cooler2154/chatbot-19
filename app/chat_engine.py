@@ -4,7 +4,7 @@ JDE Manufacturing Chat Engine — pure Python, no pydantic, no FastAPI
 
 import json
 import logging
-from typing import AsyncIterator, List, Dict, Any
+from typing import AsyncIterator, List, Dict, Any, Optional
 
 from app.jde_client import JDEClient, parse_ais_response, format_rows_as_text
 from app.ollama_client import OllamaClient, MFG_TOOLS
@@ -49,75 +49,6 @@ CALL THE APPROPRIATE TOOL. No exceptions. Do not answer from memory or prior res
 ### RULE 3 — CORRECT STATUS CODES AND TOOL SELECTION
 Work order status codes: 10=Entered, 20=Approved, 25=Parts Committed,
 30=Released, 35=Parts Issued, 40=In Process, 90=Complete, 99=Closed.
-"Approved" = status 20. "In Process" = status 40. "Released" = status 30.
-
-TOOL SELECTION — CRITICAL:
-- User gives a SPECIFIC WO NUMBER (e.g. "work order 20001", "WO 451021"):
-  → ALWAYS call get_work_order(wo_number=20001)
-  → NEVER call search_work_orders for a specific number
-- User searches by STATUS or PLANT without a specific number:
-  → call search_work_orders(status="40", plant="M30")
-- NEVER carry forward status, plant, or any filter from a previous query.
-  Each question is independent. Only pass parameters the user explicitly stated NOW.
-  If user says "work order 20001 in M30" — pass ONLY wo_number=20001. No status filter.
-
-### RULE 4 — PAGINATION
-If the tool result says "MORE RECORDS EXIST", tell the user how many were returned
-and offer to search with a higher limit or more specific filters.
-
-### RULE 5 — TOOL SELECTION
-Use search_work_orders for F4801 queries (not generic_data_request).
-Use get_bom for F3002. Use get_routing for F3003.
-Only use generic_data_request for tables not covered by specific tools.
-Never use generic_data_request with empty conditions.
-
-### RULE 6 — NO LOOPS
-Do not call the same tool with the same arguments more than once per turn.
-If a query returns no data, tell the user clearly what was searched and ask for clarification.
-
-### RULE 7 — NEVER OUTPUT RAW JSON OR FUNCTION CALLS AS TEXT
-NEVER write {{"name": "...", "parameters": {{...}}}} as text output.
-NEVER write tool call syntax as plain text.
-If you want to call a tool, USE THE TOOL CALLING MECHANISM — do not describe it in text.
-If you cannot call the tool directly, say what data you need and ask the user to rephrase.
-
-### RULE 8 — RAW MATERIALS vs PARTS LIST
-- "Raw materials" or "raw material list" for a work order → call get_wo_raw_material_list (queries F3111)
-- "Parts list", "components issued", "parts issued" → call get_wo_parts_list (queries F4802)
-- "Operations", "routing", "work centers" → call get_wo_operations (also queries F3111 for operations)
-- F3111 contains BOTH routing operations AND raw material (CPIT = component item, UORG = qty required)
-
-### RULE 9 — ONLY USE DEFINED TOOLS
-Only call tools explicitly defined. Do not invent tool names.
-Available tools: get_work_order, search_work_orders, get_bom, get_routing,
-get_wo_parts_list, get_wo_operations, get_wo_raw_material_list,
-get_mrp_messages, get_item_inventory, get_item_cost, generic_data_request.
-
-## Known working data from your JDE instance
-- Plant/Business Unit: M30 (confirmed working)
-- Work orders exist with items: 2001, 2004, 2005, 220 in plant M30
-- WO status 40 = In Process (confirmed records exist)
-- When user asks for work orders without specifying plant, use M30 as default
-
-## JDE Manufacturing Data Model
-{table_summary}
-
-## Work Order Status Codes (F4801.SRST)
-{status_ref}
-
-## Manufacturing Document Types
-{doc_ref}
-
-## Cost Components (F30026.CDCD)
-  B1: Purchased material    C1: Direct labor
-  C2: Machine/equipment     C3: Outside processing
-  D1: Variable overhead     D2: Fixed overhead
-
-## Response style
-- Use tables for multi-row data. Show field aliases alongside readable labels.
-- Format dates as DD/MM/YYYY. Include UOM with quantities.
-- Decode status codes to descriptions when showing WO data.
-- If no data found, say so clearly and suggest possible reasons.
 """
 
 
@@ -219,8 +150,10 @@ class ChatEngine:
         return [{"role": "system", "content": self.system_prompt}] + history
 
     async def stream_response(
-        self, history: List[dict], user_message: str
+        self, history: List[dict], user_message: str, tools: Optional[List] = None
     ) -> AsyncIterator[dict]:
+        """Stream assistant responses. Accepts optional tools list to support per-skill tool restrictions.
+        If tools is None, fall back to the global MFG_TOOLS."""
         messages = self._base_messages(history) + [
             {"role": "user", "content": user_message}
         ]
@@ -231,7 +164,10 @@ class ChatEngine:
             accumulated_text  = ""
             tool_calls_received = []
 
-            async for event in self.ollama.chat_stream(messages, tools=MFG_TOOLS):
+            # Pass through tools override (per-skill) or default MFG_TOOLS
+            toolset = tools if tools is not None else MFG_TOOLS
+
+            async for event in self.ollama.chat_stream(messages, tools=toolset):
                 if event["type"] == "text":
                     accumulated_text += event["content"]
                     yield {"type": "text", "content": event["content"]}
