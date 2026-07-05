@@ -1,5 +1,11 @@
+"""
+JDE Manufacturing Chatbot — Starlette backend, zero pydantic, zero FastAPI
+Works on Python 3.9 – 3.14+ with no compiler or build tools required.
+"""
+
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -8,16 +14,15 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
-from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
+from starlette.routing import Route
 
 from app.jde_client import JDEClient, JDEConfig
 from app.ollama_client import OllamaClient, MFG_TOOLS
 from app.chat_engine import ChatEngine
 from config.manufacturing_datamodel import ALL_TABLES, MODULE_GROUPS, get_field_info
-from config.skills_store import get_all as skills_get_all, get as skills_get, upsert as skills_upsert, delete as skills_delete
+from config import skills_db
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,8 @@ app_state: dict = {
         "jde_environment": "JDV920",
         "jde_role":        "*ALL",
         "default_plant":   "",
+        # admin API key can be supplied via env ADMIN_API_KEY or set here
+        "admin_api_key":   os.environ.get("ADMIN_API_KEY", ""),
     },
 }
 
@@ -55,7 +62,31 @@ def rebuild_clients():
         config=cfg,
     )
     logger.info("Clients ready — model=%s  env=%s",
-                cfg["ollama_model"], cfg["jde_environment"]) 
+                cfg["ollama_model"], cfg["jde_environment"])
+
+
+# ── Auth helper ─────────────────────────────────────────────────────────
+
+def _get_request_api_key(request: Request) -> Optional[str]:
+    # Prefer Authorization: Bearer <token>, fallback to X-API-Key
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth:
+        parts = auth.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
+        return auth
+    return request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+
+
+def require_admin(request: Request) -> Optional[JSONResponse]:
+    key = app_state["config"].get("admin_api_key") or os.environ.get("ADMIN_API_KEY")
+    if not key:
+        # If no admin key configured, deny by default — safer than open
+        return JSONResponse({"error": "admin API key not configured"}, status_code=401)
+    provided = _get_request_api_key(request)
+    if not provided or provided != key:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return None
 
 
 # ── Route handlers ─────────────────────────────────────────────────────────
@@ -74,31 +105,42 @@ async def health(request: Request):
         result["ollama_error"] = str(e)
     try:
         ok = await app_state["jde"].ping()
-        result["jde"]           = ok
-        result["jde_ais_url"]   = app_state["jde"].config.ais_base
+        result["jde"] = ok
+        result["jde_ais_url"] = app_state["jde"].config.ais_base
         result["jde_auth_mode"] = "Basic Auth"
         result["jde_environment"] = app_state["config"]["jde_environment"]
         if not ok:
             result["jde_error"] = "Ping failed — check AIS URL and credentials"
     except Exception as e:
-        result["jde"]         = False
-        result["jde_error"]   = str(e)
-        result["jde_ais_url"] = app_state["jde"].config.ais_base
+        result["jde"] = False
+        result["jde_error"] = str(e)
+        try:
+            result["jde_ais_url"] = app_state["jde"].config.ais_base
+        except Exception:
+            pass
     return JSONResponse(result)
 
 
 async def get_config(request: Request):
+    # admin only
+    auth = require_admin(request)
+    if auth:
+        return auth
     safe = {k: v for k, v in app_state["config"].items() if k != "jde_password"}
     safe["jde_password"] = "***" if app_state["config"].get("jde_password") else ""
     return JSONResponse(safe)
 
 
 async def update_config(request: Request):
+    auth = require_admin(request)
+    if auth:
+        return auth
     body = await request.json()
     allowed = {"ollama_url", "ollama_model", "jde_ais_url", "jde_username",
-               "jde_password", "jde_environment", "jde_role", "default_plant"}
-    patch = {k: v for k, v in body.items() if k in allowed and v is not None and v != ""}
+               "jde_password", "jde_environment", "jde_role", "default_plant", "admin_api_key"}
+    patch = {k: v for k, v in body.items() if k in allowed and v is not None}
     app_state["config"].update(patch)
+    # persist admin_api_key in memory only — recommend using env var for production
     rebuild_clients()
     safe = {k: v for k, v in app_state["config"].items() if k != "jde_password"}
     safe["jde_password"] = "***" if app_state["config"].get("jde_password") else ""
@@ -114,7 +156,7 @@ async def list_models(request: Request):
 
 
 async def chat(request: Request):
-    body    = await request.json()
+    body = await request.json()
     message = body.get("message", "").strip()
     history = body.get("history", [])
 
@@ -169,54 +211,63 @@ async def table_detail(request: Request):
 
 # ── Skills management endpoints ───────────────────────────────────────────
 async def list_skills(request: Request):
-    return JSONResponse({"skills": skills_get_all()})
+    auth = require_admin(request)
+    if auth:
+        return auth
+    return JSONResponse({"skills": skills_db.get_all()})
+
 
 async def create_skill(request: Request):
+    auth = require_admin(request)
+    if auth:
+        return auth
     body = await request.json()
     name = body.get("name")
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
-    # basic validation
-    skill = {
-        "name": name,
-        "display_name": body.get("display_name", name),
-        "system_prompt": body.get("system_prompt", ""),
-        "allowed_tools": body.get("allowed_tools", None),
-        "model": body.get("model", None),
-        "jde_overrides": body.get("jde_overrides", {}),
-        "default_plant": body.get("default_plant", app_state["config"].get("default_plant", "")),
-        "route": body.get("route", f"/skill/{name}/chat"),
-    }
-    skills_upsert(skill)
+    skill = body
+    skills_db.upsert(skill)
     return JSONResponse({"status": "created", "skill": skill})
 
+
 async def get_skill(request: Request):
+    auth = require_admin(request)
+    if auth:
+        return auth
     name = request.path_params["skill_name"]
-    s = skills_get(name)
+    s = skills_db.get(name)
     if not s:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse({"skill": s})
 
+
 async def update_skill(request: Request):
+    auth = require_admin(request)
+    if auth:
+        return auth
     name = request.path_params["skill_name"]
     body = await request.json()
-    s = skills_get(name)
+    s = skills_db.get(name)
     if not s:
         return JSONResponse({"error": "not found"}, status_code=404)
-    # merge
     s.update(body)
-    skills_upsert(s)
+    skills_db.upsert(s)
     return JSONResponse({"status": "updated", "skill": s})
 
+
 async def delete_skill(request: Request):
+    auth = require_admin(request)
+    if auth:
+        return auth
     name = request.path_params["skill_name"]
-    ok = skills_delete(name)
+    ok = skills_db.delete(name)
     return JSONResponse({"deleted": ok})
 
 
 async def skill_chat(request: Request):
+    # public chat endpoint for a named skill — invoking users need not be admins
     skill_name = request.path_params["skill_name"]
-    skill = skills_get(skill_name)
+    skill = skills_db.get(skill_name)
     if not skill:
         return JSONResponse({"error": "skill not found"}, status_code=404)
     body = await request.json()
@@ -236,7 +287,6 @@ async def skill_chat(request: Request):
 
     temp_ollama = None
     temp_jde = None
-    engine = None
     try:
         # Decide Ollama client
         ollama_client = app_state["ollama"]
@@ -277,7 +327,6 @@ async def skill_chat(request: Request):
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
     finally:
-        # close temp clients if created
         try:
             if temp_ollama:
                 await temp_ollama.close()
@@ -294,6 +343,9 @@ async def skill_chat(request: Request):
 
 @asynccontextmanager
 async def lifespan(app):
+    # init DB/migrate skills and clients
+    skills_db.init_db()
+    skills_db.migrate_from_json()
     rebuild_clients()
     yield
     if app_state.get("ollama"):
@@ -312,12 +364,14 @@ routes = [
     Route("/api/datamodel",          datamodel),
     Route("/api/datamodel/{table_name}", table_detail),
 
-    # Skills
+    # Skills (admin)
     Route("/api/skills",             list_skills,   methods=["GET"]),
     Route("/api/skills",             create_skill,  methods=["POST"]),
     Route("/api/skills/{skill_name}", get_skill,     methods=["GET"]),
     Route("/api/skills/{skill_name}", update_skill,  methods=["PUT"]),
     Route("/api/skills/{skill_name}", delete_skill,  methods=["DELETE"]),
+
+    # Public per-skill chat
     Route("/skill/{skill_name}/chat", skill_chat,    methods=["POST"]),
 ]
 
