@@ -301,6 +301,27 @@ var CHIP_LABELS = {
   generic_data_request:     "🗄️ Querying JDE table",
 };
 
+// ── UI Control Functions ──────────────────────────────────────────
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.classList.toggle('open');
+}
+
+function switchTab(tabName) {
+  document.querySelectorAll('.tab-content').forEach(el => {
+    el.classList.remove('active');
+  });
+  document.querySelectorAll('.tab').forEach(el => {
+    el.classList.remove('active');
+  });
+  const contentId = 'tab-' + tabName;
+  const tabContent = document.getElementById(contentId);
+  if (tabContent) {
+    tabContent.classList.add('active');
+  }
+  event.target.classList.add('active');
+}
+
 // ── Init ────────────────────────────────────────────────────────────
 window.onload = function() {
   renderQuickPrompts();
@@ -308,7 +329,7 @@ window.onload = function() {
   loadConfig();
   checkHealth(true);
   setupInput();
-  loadSkills();                // load skills on start
+  loadSkills();
 };
 
 function setupInput() {
@@ -549,4 +570,173 @@ function showTableFields(name, desc) {
       if (line.startsWith('-')) { inData = true; return; }
       if (!inData) return;
       if (line.startsWith('**') || line.startsWith('Module') || line.startsWith('Related')) return;
-      var m = line.match(/^(
+      var m = line.match(/^(\S+)\s+\|\s+(\S+)\s+\|\s+(\S+)\s+\|\s+(.*)$/);
+      if (!m) return;
+      html += '<tr style="border-bottom:1px solid var(--border2)">' +
+              '<td style="padding:4px 8px">' + escHtml(m[1]) + '</td>' +
+              '<td style="padding:4px 8px"><code>' + escHtml(m[2]) + '</code></td>' +
+              '<td style="padding:4px 8px">' + escHtml(m[3]) + '</td>' +
+              '<td style="padding:4px 8px">' + escHtml(m[4]) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    addMessage('system', html);
+  });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (!s) return '';
+  var div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function renderQuickPrompts() {
+  var container = document.getElementById('quick-prompts');
+  container.innerHTML = QUICK_PROMPTS.map(function(p) {
+    return '<button class="qp" onclick="sendMessage(\'' + p.replace(/'/g, "\\'") + '\')">' +
+           escHtml(p) + '</button>';
+  }).join('');
+}
+
+function api(method, path, body) {
+  var opts = { method: method, headers: {'Content-Type': 'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(path, opts).then(r => r.json());
+}
+
+function addMessage(role, content) {
+  hideEmpty();
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + role;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + role;
+  avatar.textContent = role === 'user' ? '👤' : '🤖';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  const bubbleContent = document.createElement('div');
+  bubbleContent.className = 'bubble-content';
+  bubbleContent.innerHTML = content;
+  bubble.appendChild(bubbleContent);
+  const time = document.createElement('div');
+  time.className = 'msg-time';
+  time.textContent = new Date().toLocaleTimeString();
+  msg.appendChild(avatar);
+  msg.appendChild(bubble);
+  msg.appendChild(time);
+  document.getElementById('messages').appendChild(msg);
+  msg.scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideEmpty() {
+  document.getElementById('empty').style.display = 'none';
+}
+
+function clearChat() {
+  state.history = [];
+  document.getElementById('messages').innerHTML = '<div id="empty" style="text-align:center;padding:3rem 1rem;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center">' +
+    '<div style="font-size:48px;margin-bottom:1rem">🏭</div>' +
+    '<h2 style="font-size:16px;font-weight:600;margin-bottom:6px">JDE Manufacturing Assistant</h2>' +
+    '<p style="color:var(--text2);max-width:360px;line-height:1.6;margin-bottom:1.5rem">Ask about work orders, BOMs, routings, MRP, shop floor, or raw materials. I can query your live JDE data.</p>' +
+    '<div id="quick-prompts" class="quick-prompts"></div></div>';
+  renderQuickPrompts();
+}
+
+function sendMessage(msg) {
+  msg = msg || document.getElementById('user-input').value.trim();
+  if (!msg || state.streaming) return;
+  addMessage('user', escHtml(msg));
+  state.history.push({ role: 'user', content: msg });
+  document.getElementById('user-input').value = '';
+  document.getElementById('user-input').style.height = 'auto';
+  const skillRoute = window.currentSkill ? '/skill/' + encodeURIComponent(window.currentSkill) + '/chat' : '/api/chat';
+  state.streaming = true;
+  state.abortCtrl = new AbortController();
+  document.getElementById('send-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'block';
+  let botContent = '';
+  fetch(skillRoute, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message: msg, history: state.history }),
+    signal: state.abortCtrl.signal
+  }).then(r => {
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let msgEl = null;
+    function read() {
+      return reader.read().then(({ done, value }) => {
+        if (done) {
+          state.streaming = false;
+          document.getElementById('send-btn').style.display = 'block';
+          document.getElementById('stop-btn').style.display = 'none';
+          if (botContent) {
+            state.history.push({ role: 'assistant', content: botContent });
+          }
+          return;
+        }
+        const chunk = decoder.decode(value);
+        chunk.split('\n').forEach(line => {
+          if (!line.startsWith('data: ')) return;
+          try {
+            const e = JSON.parse(line.slice(6));
+            if (e.type === 'error') {
+              botContent = '❌ Error: ' + e.content;
+              addMessage('bot', botContent);
+            } else if (e.type === 'done') {
+              // final event
+            } else {
+              botContent += e.content || '';
+              if (!msgEl) {
+                msgEl = document.createElement('div');
+                msgEl.className = 'msg bot';
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar bot';
+                avatar.textContent = '🤖';
+                const bubble = document.createElement('div');
+                bubble.className = 'bubble';
+                const bubbleContent = document.createElement('div');
+                bubbleContent.className = 'bubble-content';
+                bubbleContent.id = 'bot-msg-' + Date.now();
+                bubble.appendChild(bubbleContent);
+                const time = document.createElement('div');
+                time.className = 'msg-time';
+                time.textContent = new Date().toLocaleTimeString();
+                msgEl.appendChild(avatar);
+                msgEl.appendChild(bubble);
+                msgEl.appendChild(time);
+                document.getElementById('messages').appendChild(msgEl);
+              }
+              document.getElementById(msgEl.querySelector('.bubble-content').id).innerHTML = escHtml(botContent) + '<span class="cursor"></span>';
+              msgEl.scrollIntoView({ behavior: 'smooth' });
+            }
+          } catch (e) {
+            console.error('Parse error:', e);
+          }
+        });
+        return read();
+      });
+    }
+    return read();
+  }).catch(err => {
+    if (err.name !== 'AbortError') {
+      console.error('Chat error:', err);
+      addMessage('bot', '❌ Connection error');
+    }
+    state.streaming = false;
+    document.getElementById('send-btn').style.display = 'block';
+    document.getElementById('stop-btn').style.display = 'none';
+  });
+}
+
+function stopStream() {
+  if (state.abortCtrl) {
+    state.abortCtrl.abort();
+    state.streaming = false;
+    document.getElementById('send-btn').style.display = 'block';
+    document.getElementById('stop-btn').style.display = 'none';
+  }
+}
+</script>
+</body>
+</html>
